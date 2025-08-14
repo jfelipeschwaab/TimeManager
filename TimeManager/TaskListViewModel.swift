@@ -59,7 +59,6 @@ final class TaskListViewModel: ObservableObject {
         try? context.save()
     }
 }
-
 // MARK: - TaskListView.swift
 import SwiftUI
 import SwiftData
@@ -69,12 +68,16 @@ struct TaskListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel: TaskListViewModel
 
+    // Estado do timer
+    @State private var elapsedTime: TimeInterval = 0
+    @State private var timer: Timer?
+
     init(context: ModelContext) {
         _viewModel = StateObject(wrappedValue: TaskListViewModel(context: context))
     }
 
     var body: some View {
-        VStack {
+        VStack(spacing: 20) {
             List(viewModel.tasks) { task in
                 Text(task.name)
             }
@@ -83,15 +86,80 @@ struct TaskListView: View {
                 viewModel.criarTasksPadrao()
             }
             .padding()
+
+            // Exibe o tempo decorrido formatado
+            Text("Tempo decorrido: \(formatTime(elapsedTime))")
+                .font(.headline)
+
+            // Botão para iniciar o timer
+            Button("Iniciar Timer") {
+                startCustomTimer()
+                updateElapsedTime()
+            }
+            .padding()
         }
-        .onChange(of: scenePhase) { newPhase in
+        .onAppear {
+            updateElapsedTime()
+            startUpdatingTimer()
+        }
+        .onDisappear {
+            stopUpdatingTimer()
+        }
+        
+        .onChange(of: scenePhase) { _ , newPhase in
             if newPhase == .active {
                 let today = Calendar.current.startOfDay(for: Date())
                 if today != viewModel.selectedDate {
                     viewModel.selectedDate = today
                 }
+                updateElapsedTime()
+                startUpdatingTimer()
+            } else if newPhase == .background {
+                stopUpdatingTimer()
             }
         }
     }
-}
 
+    // MARK: - Timer Persistente
+    func startCustomTimer() {
+        UserDefaults.standard.set(Date(), forKey: "timerStartDate")
+    }
+
+    func elapsedTimeSinceStart() -> TimeInterval {
+        guard let startDate = UserDefaults.standard.object(forKey: "timerStartDate") as? Date else {
+            return 0
+        }
+        return Date().timeIntervalSince(startDate)
+    }
+
+    // Atualiza o estado do tempo decorrido
+    func updateElapsedTime() {
+        elapsedTime = elapsedTimeSinceStart()
+    }
+
+    // Inicia o Timer que atualiza a cada segundo
+    func startUpdatingTimer() {
+        stopUpdatingTimer()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            updateElapsedTime()
+        }
+    }
+
+    // Para o Timer
+    func stopUpdatingTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    // Formata para mm:ss
+    func formatTime(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval) % 60
+        let minutes = (Int(interval) / 60) % 60
+        let hours = Int(interval) / 3600
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%02d:%02d", minutes, seconds)
+        }
+    }
+}
