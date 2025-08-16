@@ -1,40 +1,89 @@
-// MARK: - TimeManager.swift
 import Foundation
 import Combine
 
 final class TimeManager {
     static let shared = TimeManager()
-    let dayDidChange = PassthroughSubject<Date, Never>()
 
-    private var timer: Timer?
+    // MARK: Publishers
+    let dayDidChange = PassthroughSubject<Date, Never>()
+    let remainingTimeDidChange = PassthroughSubject<TimeInterval, Never>()
+
+    // MARK: Variáveis de controle do dia
+    private var nextDayTriggerTimer: Timer?
     private var currentDay: Date
 
+    // MARK: Variável de controle do timer regressivo
+    private var liveTimer: Timer?
+
     private init() {
-        //Meia noite de Hoje
         currentDay = Calendar.current.startOfDay(for: Date())
-        
-        //Cria o timer para a meia noite do dia de amanhã
         scheduleTimerForNextDay()
+
+        if remainingTimeSinceStart() > 0 {
+            startLiveTimer()
+        }
     }
 
-    /// Calcula o tempo  de intervalo, em segundos, para a próxima meia noite e cria um Timer único baseado nesse tempo.
-    /// Quando o timer dispara, atualiza currentDay(TimeManager) para a nova meia-noite
+    /// Cria um timer para ser chamado na próxima meia-noite para atualizar o Publisher dayDidChange
     private func scheduleTimerForNextDay() {
-        timer?.invalidate()
+        nextDayTriggerTimer?.invalidate()
         let now = Date()
         if let nextMidnight = Calendar.current.date(byAdding: .day, value: 1, to: currentDay) {
-            let interval = nextMidnight.timeIntervalSince(now)
-            print("Timer agendado para \(nextMidnight) (\(interval) segundos)")
-            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            let intervalToNextMidnight = nextMidnight.timeIntervalSince(now)
+            nextDayTriggerTimer = Timer.scheduledTimer(withTimeInterval: intervalToNextMidnight, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
                 let today = Calendar.current.startOfDay(for: Date())
                 self.currentDay = today
-                print("Dia mudou! Notificando subscribers: \(today)")
-                /// Publica a nova data por meio .send
                 self.dayDidChange.send(today)
-                ///Cria um novo schedule pro próximo dia
                 self.scheduleTimerForNextDay()
             }
+        }
+    }
+
+    /// Cria um Timer Regressivo, da duração até 0d
+    func startCountdown(duration: TimeInterval) {
+        let endDate = Date().addingTimeInterval(duration)
+        UserDefaults.standard.set(endDate, forKey: "timerEndDate")
+        startLiveTimer()
+    }
+    
+    
+    /// Calcula o tempo que falta para o Timer regressivo acabar, em casos de o app ter sido minimizado ou celular desligado.
+    func remainingTimeSinceStart() -> TimeInterval {
+        guard let endDate = UserDefaults.standard.object(forKey: "timerEndDate") as? Date else {
+            return 0
+        }
+        return max(endDate.timeIntervalSince(Date()), 0)
+    }
+
+    
+    private func startLiveTimer() {
+        stopLiveTimer()
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let remaining = self.remainingTimeSinceStart()
+            self.remainingTimeDidChange.send(remaining)
+
+            if remaining <= 0 {
+                self.stopLiveTimer()
+            }
+        }
+    }
+
+    func stopLiveTimer() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+    }
+
+    // MARK: - Formatação de tempo
+    func formatTime(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval) % 60
+        let minutes = (Int(interval) / 60) % 60
+        let hours = Int(interval) / 3600
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
+        } else {
+            return String(format: "%02d:%02d", minutes, seconds)
         }
     }
 }

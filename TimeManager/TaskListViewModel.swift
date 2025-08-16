@@ -8,6 +8,8 @@ import Combine
 final class TaskListViewModel: ObservableObject {
     @Published var selectedDate: Date = Calendar.current.startOfDay(for: Date())
     @Published private(set) var tasks: [Task] = []
+    @Published var remainingTime: TimeInterval = 0
+
 
     private let context: ModelContext
     private var cancellables = Set<AnyCancellable>()
@@ -58,19 +60,37 @@ final class TaskListViewModel: ObservableObject {
         context.insert(novaTask)
         try? context.save()
     }
+    
+    func handleScenePhase(_ newPhase: ScenePhase) {
+        if newPhase == .active {
+            let today = Calendar.current.startOfDay(for: Date())
+            if today != selectedDate {
+                selectedDate = today
+            }
+            // Atualiza tempo restante
+            remainingTime = TimeManager.shared.remainingTimeSinceStart()
+        }
+    }
+    
+    func startObservingTimer() {
+        remainingTime = TimeManager.shared.remainingTimeSinceStart()
+        
+        TimeManager.shared.remainingTimeDidChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] newRemaining in
+                self?.remainingTime = newRemaining
+            }
+            .store(in: &cancellables)
+    }
+
+
 }
-// MARK: - TaskListView.swift
-import SwiftUI
-import SwiftData
+
 
 struct TaskListView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var viewModel: TaskListViewModel
-
-    // Estado do timer
-    @State private var elapsedTime: TimeInterval = 0
-    @State private var timer: Timer?
 
     init(context: ModelContext) {
         _viewModel = StateObject(wrappedValue: TaskListViewModel(context: context))
@@ -85,81 +105,20 @@ struct TaskListView: View {
             Button("Criar Task Padrão do Dia") {
                 viewModel.criarTasksPadrao()
             }
-            .padding()
 
-            // Exibe o tempo decorrido formatado
-            Text("Tempo decorrido: \(formatTime(elapsedTime))")
+            Text("Tempo restante: \(TimeManager.shared.formatTime(viewModel.remainingTime))")
                 .font(.headline)
 
-            // Botão para iniciar o timer
-            Button("Iniciar Timer") {
-                startCustomTimer()
-                updateElapsedTime()
+            Button("Iniciar Timer de 5 minutos") {
+                TimeManager.shared.startCountdown(duration: 5 * 60)
             }
-            .padding()
         }
         .onAppear {
-            updateElapsedTime()
-            startUpdatingTimer()
+            viewModel.startObservingTimer()
         }
-        .onDisappear {
-            stopUpdatingTimer()
+        .onChange(of: scenePhase) { _, newPhase in
+            viewModel.handleScenePhase(newPhase)
         }
-        
-        .onChange(of: scenePhase) { _ , newPhase in
-            if newPhase == .active {
-                let today = Calendar.current.startOfDay(for: Date())
-                if today != viewModel.selectedDate {
-                    viewModel.selectedDate = today
-                }
-                updateElapsedTime()
-                startUpdatingTimer()
-            } else if newPhase == .background {
-                stopUpdatingTimer()
-            }
-        }
-    }
 
-    // MARK: - Timer Persistente
-    func startCustomTimer() {
-        UserDefaults.standard.set(Date(), forKey: "timerStartDate")
-    }
-
-    func elapsedTimeSinceStart() -> TimeInterval {
-        guard let startDate = UserDefaults.standard.object(forKey: "timerStartDate") as? Date else {
-            return 0
-        }
-        return Date().timeIntervalSince(startDate)
-    }
-
-    // Atualiza o estado do tempo decorrido
-    func updateElapsedTime() {
-        elapsedTime = elapsedTimeSinceStart()
-    }
-
-    // Inicia o Timer que atualiza a cada segundo
-    func startUpdatingTimer() {
-        stopUpdatingTimer()
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            updateElapsedTime()
-        }
-    }
-
-    // Para o Timer
-    func stopUpdatingTimer() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    // Formata para mm:ss
-    func formatTime(_ interval: TimeInterval) -> String {
-        let seconds = Int(interval) % 60
-        let minutes = (Int(interval) / 60) % 60
-        let hours = Int(interval) / 3600
-        if hours > 0 {
-            return String(format: "%02d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%02d:%02d", minutes, seconds)
-        }
     }
 }
